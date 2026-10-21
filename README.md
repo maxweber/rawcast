@@ -54,8 +54,11 @@ need the settings below.
 
 ```
 git clone https://github.com/maxweber/rawcast ~/bin/rawcast
-~/bin/rawcast/record
+echo 'export PATH="$HOME/bin/rawcast:$PATH"' >> ~/.bashrc
 ```
+
+Open a new shell, then `record`, `record-screen` and `record-webcam` are
+commands. Without the PATH line call them as `~/bin/rawcast/record`.
 
 The first `record-screen` run shows the desktop's screen picker: pick the
 screen. gpu-screen-recorder stores the portal token and restores it on every
