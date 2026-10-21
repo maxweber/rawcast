@@ -1,0 +1,95 @@
+#!/usr/bin/env bb
+
+;; Composes a recording folder into one mkv: the screen with the webcam in a
+;; corner, lips and voice in sync. Both files carry the microphone, so the
+;; lag between them is measured by cross-correlating the two audio tracks
+;; (lib/lag.py, python3 + numpy) and the webcam is shifted by it. The audio of
+;; the result is the screencast's track.
+;;
+;; Usage: compose <recording-folder> [output.mkv]
+;;   default output: <recording-folder>/composite.mkv
+;; Settings: RAWCAST_PIP_WIDTH (640), RAWCAST_PIP_MARGIN (32),
+;;   RAWCAST_PIP_CORNER (bottom-right), RAWCAST_CAMERA_ENCODER, RAWCAST_PYTHON.
+
+(require '[babashka.classpath :as cp]
+         '[babashka.fs :as fs])
+
+(def rawcast-dir (str (fs/parent (fs/real-path *file*))))
+
+(cp/add-classpath (str rawcast-dir "/lib"))
+
+(require '[babashka.process :as p]
+         '[clojure.string :as str]
+         '[rawcast :as rc])
+
+(defn extract-audio!
+  "The audio track as 8 kHz mono wav, enough for the cross-correlation."
+  [mkv wav]
+  (p/shell rc/ffmpeg "-hide_banner" "-loglevel" "error" "-y" "-i" mkv
+           "-map" "0:a:0" "-ac" "1" "-ar" "8000" "-c:a" "pcm_s16le" wav))
+
+(defn lag
+  "Seconds the webcam recording started before the screen recording (negative:
+  after), and the confidence as ratio of the correlation peak to the runner-up."
+  [screen webcam]
+  (let [dir (fs/create-temp-dir {:prefix "rawcast"})
+        screen-wav (str dir "/screen.wav")
+        webcam-wav (str dir "/webcam.wav")]
+    (try
+      (extract-audio! screen screen-wav)
+      (extract-audio! webcam webcam-wav)
+      (let [[lag ratio] (-> (p/shell {:out :string} rc/python "-I"
+                                     (str rawcast-dir "/lib/lag.py")
+                                     screen-wav webcam-wav "3")
+                            (:out)
+                            (str/trim)
+                            (str/split #" "))]
+        {:lag (parse-double lag) :ratio (parse-double ratio)})
+      (finally
+        (fs/delete-tree dir)))))
+
+(def corner-positions
+  {"bottom-right" "W-w-M:H-h-M"
+   "bottom-left" "M:H-h-M"
+   "top-right" "W-w-M:M"
+   "top-left" "M:M"})
+
+(defn overlay-position []
+  (-> (or (corner-positions rc/pip-corner)
+          (throw (ex-info (str "unknown RAWCAST_PIP_CORNER " rc/pip-corner)
+                          {:known (keys corner-positions)})))
+      (str/replace "M" rc/pip-margin)))
+
+(defn command
+  "Shifts the webcam by the lag: seeks into it when it started earlier, delays
+  it when it started later."
+  [screen webcam lag output]
+  (concat
+   [rc/ffmpeg "-hide_banner" "-loglevel" "error" "-stats" "-y"
+    "-i" screen]
+   (if (neg? lag)
+     ["-itsoffset" (str (- lag))]
+     ["-ss" (str lag)])
+   ["-i" webcam
+    "-filter_complex" (str "[1:v]scale=" rc/pip-width ":-2[cam];"
+                           "[0:v][cam]overlay=" (overlay-position)
+                           ":eof_action=pass,format=yuv420p[v]")
+    "-map" "[v]" "-map" "0:a:0"]
+   (rc/encoder)
+   ["-c:a" "copy" output]))
+
+(let [[dir output] *command-line-args*
+      screen (str dir "/screen.mkv")
+      webcam (str dir "/webcam.mkv")
+      output (or output (str dir "/composite.mkv"))]
+  (when-not (and dir (fs/exists? screen) (fs/exists? webcam))
+    (binding [*out* *err*]
+      (println "compose: usage: compose <folder with screen.mkv and webcam.mkv> [output.mkv]"))
+    (System/exit 1))
+  (let [{:keys [lag ratio]} (lag screen webcam)]
+    (println (format "Webcam started %.3f s %s the screen (confidence %.1f)"
+                     (abs lag) (if (neg? lag) "after" "before") ratio))
+    (when (< ratio 1.5)
+      (println "Low confidence: little shared sound in the two tracks, check the sync."))
+    (apply p/shell (command screen webcam lag output))
+    (println "Saved" output)))

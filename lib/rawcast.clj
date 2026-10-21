@@ -27,9 +27,39 @@
   "h264_nvenc (NVIDIA) or libx264 (CPU)."
   (setting "RAWCAST_CAMERA_ENCODER" "h264_nvenc"))
 
+(def encoder-args
+  "ffmpeg arguments per camera encoder, constant quality."
+  {"h264_nvenc" ["-c:v" "h264_nvenc" "-preset" "p5" "-tune" "hq"
+                 "-rc" "vbr" "-cq" "20" "-b:v" "0"]
+   "libx264" ["-c:v" "libx264" "-preset" "veryfast" "-crf" "20"]})
+
+(defn encoder
+  "The ffmpeg arguments of RAWCAST_CAMERA_ENCODER."
+  []
+  (or (encoder-args camera-encoder)
+      (throw (ex-info (str "unknown RAWCAST_CAMERA_ENCODER " camera-encoder)
+                      {:known (keys encoder-args)}))))
+
 (def ffmpeg
   "Needs the pulse input device and the camera encoder compiled in."
   (setting "RAWCAST_FFMPEG" "/usr/bin/ffmpeg"))
+
+(def python
+  "A python3 with numpy, used by compose to measure the lag between the two
+  recordings."
+  (setting "RAWCAST_PYTHON" "/usr/bin/python3"))
+
+(def pip-width
+  "Width of the webcam picture in the composed video, in pixels."
+  (setting "RAWCAST_PIP_WIDTH" "640"))
+
+(def pip-margin
+  "Distance of the webcam picture from the edges, in pixels."
+  (setting "RAWCAST_PIP_MARGIN" "32"))
+
+(def pip-corner
+  "bottom-right, bottom-left, top-right or top-left."
+  (setting "RAWCAST_PIP_CORNER" "bottom-right"))
 
 (def screen-fps
   (setting "RAWCAST_SCREEN_FPS" "60"))

@@ -17,13 +17,14 @@ Press Enter to stop both recordings.
 └── webcam.mkv   1920x1080, 30 fps, H.264, microphone as FLAC track
 ```
 
-Three babashka scripts:
+Four babashka scripts:
 
-| script | records |
+| script | does |
 |---|---|
-| `record [name]` | both, into one dated folder |
-| `record-screen [out.mkv]` | the screen |
-| `record-webcam [out.mkv]` | the webcam |
+| `record [name]` | records both, into one dated folder |
+| `record-screen [out.mkv]` | records the screen |
+| `record-webcam [out.mkv]` | records the webcam |
+| `compose <folder> [out.mkv]` | screen with the webcam in a corner, in sync, as one mkv |
 
 Enter or Ctrl-C stops a recording. The files are finalized before the script
 exits.
@@ -45,6 +46,7 @@ of both sources for the edit.
   (`h264_nvenc` or `libx264`). The Ubuntu package `ffmpeg` has both; the
   Homebrew build has neither, hence the default `/usr/bin/ffmpeg`.
 - `pactl` (pulseaudio-utils) and `setsid` (util-linux)
+- for `compose`: a python3 with numpy (Ubuntu: `apt install python3-numpy`)
 
 Written for a laptop with KDE Plasma 6.4 on Wayland, PipeWire, an Intel +
 NVIDIA GPU, a 1080p MJPEG webcam and a Shure MV7 USB microphone. Other setups
@@ -80,6 +82,10 @@ Environment variables, defaults in `lib/rawcast.clj`:
 | `RAWCAST_FFMPEG` | `/usr/bin/ffmpeg` | |
 | `RAWCAST_SCREEN_FPS` | `60` | |
 | `RAWCAST_RECORDINGS` | `~/Videos/Recordings` | |
+| `RAWCAST_PYTHON` | `/usr/bin/python3` | needs numpy, for `compose` |
+| `RAWCAST_PIP_WIDTH` | `640` | webcam width in the composed video |
+| `RAWCAST_PIP_MARGIN` | `32` | distance from the edges |
+| `RAWCAST_PIP_CORNER` | `bottom-right` | or `bottom-left`, `top-right`, `top-left` |
 
 Both scripts refuse to start when the microphone is not connected, rather
 than recording with whatever input is the default.
@@ -103,10 +109,28 @@ without a duration:
   scripts send exactly one SIGINT, whether stopped by Enter, Ctrl-C or a
   SIGTERM from the parent.
 
+## Compose
+
+```
+compose ~/Videos/Recordings/2026-10-21T11:56-sample
+Webcam started 0.121 s before the screen (confidence 2.8)
+Saved /home/max/Videos/Recordings/2026-10-21T11:56-sample/composite.mkv
+```
+
+The two recordings start a few hundred milliseconds apart and the offset
+differs per run. Both files carry the microphone, so `compose` measures it:
+the two audio tracks are cross-correlated (`lib/lag.py`, FFT at 8 kHz) and
+the webcam is shifted by the lag, which puts lips and voice in sync to the
+audio sample. The webcam is scaled to `RAWCAST_PIP_WIDTH` and placed in
+`RAWCAST_PIP_CORNER`; the audio of the result is the screencast's track. The
+confidence is the ratio of the correlation peak to the runner-up; below 1.5
+the two tracks had too little sound in common and the sync deserves a look.
+
 ## In the editor
 
-Import both files, align by waveform (Kdenlive, DaVinci Resolve, Premiere all
-have it), mute the webcam track. The screencast's track is the voice.
+For anything beyond the picture-in-picture, import both files, align by
+waveform (Kdenlive, DaVinci Resolve, Premiere all have it), mute the webcam
+track. The screencast's track is the voice.
 
 DaVinci Resolve does not import mkv; remux without re-encoding first:
 

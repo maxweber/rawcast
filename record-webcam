@@ -17,11 +17,6 @@
 (require '[babashka.process :as p]
          '[rawcast :as rc])
 
-(def encoder-args
-  {"h264_nvenc" ["-c:v" "h264_nvenc" "-preset" "p5" "-tune" "hq"
-                 "-rc" "vbr" "-cq" "20" "-b:v" "0"]
-   "libx264" ["-c:v" "libx264" "-preset" "veryfast" "-crf" "20"]})
-
 (defn command
   "setsid puts ffmpeg into its own session: a Ctrl-C in the terminal must not
   reach it, a second signal makes ffmpeg skip writing the mkv trailer.
@@ -33,9 +28,7 @@
     "-framerate" rc/camera-fps "-ts" "mono2abs" "-thread_queue_size" "1024"
     "-i" rc/camera
     "-f" "pulse" "-channels" "1" "-thread_queue_size" "1024" "-i" rc/mic]
-   (or (encoder-args rc/camera-encoder)
-       (throw (ex-info (str "unknown RAWCAST_CAMERA_ENCODER " rc/camera-encoder)
-                       {:known (keys encoder-args)})))
+   (rc/encoder)
    ["-pix_fmt" "yuv420p" "-g" (str (* 2 (parse-long rc/camera-fps)))
     "-c:a" "flac"
     output]))
