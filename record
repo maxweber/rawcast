@@ -1,0 +1,58 @@
+#!/usr/bin/env bb
+
+;; Records the screen (with the microphone as audio track) and the webcam at
+;; the same time into one folder per recording:
+;;   <recordings>/<yyyy-MM-ddTHH:mm>-<name>/screen.mkv   (via record-screen)
+;;   <recordings>/<yyyy-MM-ddTHH:mm>-<name>/webcam.mkv   (via record-webcam)
+;; Both carry the microphone, so the editor can align the two clips by
+;; waveform (mute the webcam track in the edit).
+;;
+;; Usage: record [name]
+;;   record sample   -> ~/Videos/Recordings/2026-10-21T11:56-sample/
+;;   record          -> ~/Videos/Recordings/2026-10-21T11:56/
+;; Stop: press Enter (or Ctrl-C). Both files are finalized before the script exits.
+
+(require '[babashka.classpath :as cp]
+         '[babashka.fs :as fs])
+
+(def rawcast-dir (str (fs/parent (fs/real-path *file*))))
+
+(cp/add-classpath (str rawcast-dir "/lib"))
+
+(require '[babashka.process :as p]
+         '[clojure.string :as str]
+         '[rawcast :as rc])
+
+(defn recording-dir
+  "<timestamp>-<name>, with a -2, -3 ... suffix when that folder exists
+  already (a second recording within the same minute)."
+  [name]
+  (let [base (str rc/recordings-dir "/"
+                  (str/join "-" (remove str/blank? [(rc/timestamp) name])))]
+    (->> (cons base (map #(str base "-" %) (iterate inc 2)))
+         (remove fs/exists?)
+         (first))))
+
+(defn stop!
+  "Closing the child's stdin is its Enter key, then wait for it to finalize."
+  [proc]
+  (try (.close (:in proc)) (catch Exception _))
+  @proc)
+
+(defn start! [script output]
+  (p/process [(str rawcast-dir "/" script) output]
+             {:out :inherit :err :inherit :shutdown stop!}))
+
+(let [dir (recording-dir (first *command-line-args*))
+      outputs {"record-screen" (str dir "/screen.mkv")
+               "record-webcam" (str dir "/webcam.mkv")}
+      procs (into {} (map (fn [[script output]] [script (start! script output)]))
+                  outputs)]
+  (println "Recording into" dir)
+  (println "Press Enter to stop both recordings.")
+  (read-line)
+  (doseq [[script proc] procs]
+    (let [{:keys [exit]} (stop! proc)]
+      (when-not (zero? exit)
+        (binding [*out* *err*]
+          (println script "exited with" exit))))))

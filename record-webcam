@@ -1,0 +1,61 @@
+#!/usr/bin/env bb
+
+;; Records the webcam into an mkv: H.264 at constant quality (~50 MB/min at
+;; 1080p30) plus the microphone as a FLAC track, so that the editor can align
+;; the clip with the screencast by waveform (mute it in the edit, the
+;; screencast carries the voice). Refuses to start without the microphone.
+;;
+;; Usage: record-webcam [output.mkv]
+;;   default output: <recordings>/<yyyy-MM-ddTHH:mm>/webcam.mkv
+;; Stop: press Enter (or Ctrl-C). The file is finalized before the script exits.
+
+(require '[babashka.classpath :as cp]
+         '[babashka.fs :as fs])
+
+(cp/add-classpath (str (fs/parent (fs/real-path *file*)) "/lib"))
+
+(require '[babashka.process :as p]
+         '[rawcast :as rc])
+
+(def encoder-args
+  {"h264_nvenc" ["-c:v" "h264_nvenc" "-preset" "p5" "-tune" "hq"
+                 "-rc" "vbr" "-cq" "20" "-b:v" "0"]
+   "libx264" ["-c:v" "libx264" "-preset" "veryfast" "-crf" "20"]})
+
+(defn command
+  "setsid puts ffmpeg into its own session: a Ctrl-C in the terminal must not
+  reach it, a second signal makes ffmpeg skip writing the mkv trailer.
+  -ts mono2abs puts the camera frames on the same clock as the microphone."
+  [output]
+  (concat
+   ["setsid" rc/ffmpeg "-nostdin" "-hide_banner" "-loglevel" "error" "-nostats" "-y"
+    "-f" "v4l2" "-input_format" "mjpeg" "-video_size" rc/camera-size
+    "-framerate" rc/camera-fps "-ts" "mono2abs" "-thread_queue_size" "1024"
+    "-i" rc/camera
+    "-f" "pulse" "-channels" "1" "-thread_queue_size" "1024" "-i" rc/mic]
+   (or (encoder-args rc/camera-encoder)
+       (throw (ex-info (str "unknown RAWCAST_CAMERA_ENCODER " rc/camera-encoder)
+                       {:known (keys encoder-args)})))
+   ["-pix_fmt" "yuv420p" "-g" (str (* 2 (parse-long rc/camera-fps)))
+    "-c:a" "flac"
+    output]))
+
+(def stopping (atom false))
+
+(defn stop!
+  "One SIGINT lets ffmpeg finalize the mkv, then wait for it. Runs from the
+  Enter key and again from the shutdown hook, so it signals only once."
+  [proc]
+  (when (compare-and-set! stopping false true)
+    (rc/interrupt! (.pid ^java.lang.Process (:proc proc))))
+  @proc)
+
+(let [output (or (first *command-line-args*) (rc/default-output "webcam.mkv"))]
+  (rc/require-mic! "record-webcam")
+  (fs/create-dirs (fs/parent (fs/absolutize output)))
+  (let [proc (apply p/process {:out :inherit :err :inherit :shutdown stop!}
+                    (command output))]
+    (println "Recording webcam ->" output "(Enter stops)")
+    (read-line)
+    (stop! proc)
+    (println "Saved" output)))

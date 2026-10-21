@@ -1,0 +1,68 @@
+#!/usr/bin/env bb
+
+;; Records the screen (full resolution) into an mkv with the microphone as the
+;; audio track. The screen is captured through the xdg-desktop-portal by
+;; gpu-screen-recorder (Flatpak com.dec05eba.gpu_screen_recorder). The first
+;; run shows the desktop's screen picker: choose the screen, the choice is
+;; stored and restored on every later run. Refuses to start without the
+;; microphone.
+;;
+;; Usage: record-screen [output.mkv]
+;;   default output: <recordings>/<yyyy-MM-ddTHH:mm>/screen.mkv
+;; Stop: press Enter (or Ctrl-C). The file is finalized before the script exits.
+
+(require '[babashka.classpath :as cp]
+         '[babashka.fs :as fs])
+
+(cp/add-classpath (str (fs/parent (fs/real-path *file*)) "/lib"))
+
+(require '[babashka.process :as p]
+         '[clojure.string :as str]
+         '[rawcast :as rc])
+
+(defn command
+  "setsid puts the recorder into its own session: a Ctrl-C in the terminal
+  must not reach it, stop! sends the one signal it gets."
+  [output]
+  ["setsid" "flatpak" "run" "--command=gpu-screen-recorder" "com.dec05eba.gpu_screen_recorder"
+   "-w" "portal" "-restore-portal-session" "yes"
+   "-f" rc/screen-fps "-fm" "cfr" "-cursor" "yes"
+   "-a" (str "device:" rc/mic)
+   "-k" "h264" "-q" "very_high" "-c" "mkv"
+   "-o" output])
+
+(defn recorder-pids
+  "Pids of the gpu-screen-recorder processes inside the Flatpak sandbox. A
+  signal sent to `flatpak run` never reaches them, so they are found among
+  the descendants of the wrapper process."
+  [proc]
+  (->> (.toArray (.descendants (.toHandle ^java.lang.Process (:proc proc))))
+       (map #(.pid ^java.lang.ProcessHandle %))
+       (filter (fn [pid]
+                 (try (-> (slurp (str "/proc/" pid "/cmdline"))
+                          (str/split #"\u0000")
+                          (first)
+                          (str/ends-with? "gpu-screen-recorder"))
+                      (catch Exception _ false))))))
+
+(def stopping (atom false))
+
+(defn stop!
+  "One SIGINT lets the recorder finalize the mkv, then wait for the wrapper to
+  exit. Runs from the Enter key and again from the shutdown hook, so it
+  signals only once."
+  [proc]
+  (when (compare-and-set! stopping false true)
+    (doseq [pid (recorder-pids proc)]
+      (rc/interrupt! pid)))
+  @proc)
+
+(let [output (or (first *command-line-args*) (rc/default-output "screen.mkv"))]
+  (rc/require-mic! "record-screen")
+  (fs/create-dirs (fs/parent (fs/absolutize output)))
+  (let [proc (apply p/process {:out :inherit :err :inherit :shutdown stop!}
+                    (command output))]
+    (println "Recording screen ->" output "(Enter stops)")
+    (read-line)
+    (stop! proc)
+    (println "Saved" output)))
