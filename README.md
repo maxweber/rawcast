@@ -22,7 +22,7 @@ Four babashka scripts:
 
 | script | does |
 |---|---|
-| `record [name]` | records both, into one dated folder |
+| `record [--mute] [name]` | records both, into one dated folder; `--mute` silences the speakers meanwhile |
 | `record-screen [out.mkv]` | records the screen |
 | `record-webcam [out.mkv]` | records the webcam |
 | `compose <folder> [out.mkv]` | screen with the webcam in a corner, in sync, as one mkv |
@@ -46,9 +46,11 @@ is one fader away, and `compose` keeps aligning the webcam by the clean
 microphone track. A second track in the same file shares the clock with the
 first; a separate file would need its own alignment.
 
-Wear headphones while recording. With speakers the microphone hears the
-desktop audio a few milliseconds late, which sounds hollow on top of the clean
-track.
+With speakers the microphone hears the desktop audio a few milliseconds late,
+which sounds hollow on top of the clean track. Wear headphones, or record with
+`record --mute`: the speakers are muted while recording and come back when it
+stops. PipeWire takes the monitor before the mute, so the desktop audio track
+is recorded all the same; you just do not hear it.
 
 ## Requirements
 

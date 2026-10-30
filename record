@@ -7,9 +7,14 @@
 ;; Both carry the microphone, so the editor can align the two clips by
 ;; waveform (mute the webcam track in the edit).
 ;;
-;; Usage: record [name]
+;; Usage: record [--mute] [name]
 ;;   record sample   -> ~/Videos/Recordings/2026-10-21T11:56-sample/
 ;;   record          -> ~/Videos/Recordings/2026-10-21T11:56/
+;;   --mute          silences the speakers while recording, so that the
+;;                   microphone does not hear the desktop audio again; the
+;;                   desktop audio track is recorded all the same (PipeWire
+;;                   takes the monitor before the mute). The speakers come
+;;                   back when the recording stops.
 ;; Stop: press Enter (or Ctrl-C). Both files are finalized before the script exits.
 
 (require '[babashka.classpath :as cp]
@@ -33,6 +38,32 @@
          (remove fs/exists?)
          (first))))
 
+(defn output-muted?
+  "Mute state of the default output, as pactl reports it."
+  []
+  (str/includes? (:out (p/shell {:out :string} "pactl" "get-sink-mute" "@DEFAULT_SINK@"))
+                 "yes"))
+
+(defn mute-output!
+  "A plain process: p/shell would register a shutdown hook, which fails
+  inside a shutdown hook."
+  [muted?]
+  @(p/process ["pactl" "set-sink-mute" "@DEFAULT_SINK@" (if muted? "1" "0")]))
+
+(defn mute-while-recording!
+  "Mutes the speakers and returns the function that restores their previous
+  state. Registered as shutdown hook as well, so a Ctrl-C or a crash does not
+  leave them muted; restores only once."
+  []
+  (let [before (output-muted?)
+        restored (atom false)
+        restore! (fn []
+                   (when (compare-and-set! restored false true)
+                     (mute-output! before)))]
+    (mute-output! true)
+    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable restore!))
+    restore!))
+
 (defn stop!
   "Closing the child's stdin is its Enter key, then wait for it to finalize."
   [proc]
@@ -43,16 +74,21 @@
   (p/process [(str rawcast-dir "/" script) output]
              {:out :inherit :err :inherit :shutdown stop!}))
 
-(let [dir (recording-dir (first *command-line-args*))
+(let [mute? (boolean (some #{"--mute"} *command-line-args*))
+      dir (recording-dir (first (remove #{"--mute"} *command-line-args*)))
+      restore-output! (if mute? (mute-while-recording!) (fn []))
       outputs {"record-screen" (str dir "/screen.mkv")
                "record-webcam" (str dir "/webcam.mkv")}
       procs (into {} (map (fn [[script output]] [script (start! script output)]))
                   outputs)]
   (println "Recording into" dir)
+  (when mute?
+    (println "Speakers muted until the recording stops."))
   (println "Press Enter to stop both recordings.")
   (read-line)
   (doseq [[script proc] procs]
     (let [{:keys [exit]} (stop! proc)]
       (when-not (zero? exit)
         (binding [*out* *err*]
-          (println script "exited with" exit))))))
+          (println script "exited with" exit)))))
+  (restore-output!))
