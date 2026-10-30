@@ -1,7 +1,7 @@
 #!/usr/bin/env bb
 
-;; Records the screen (with the microphone as audio track) and the webcam at
-;; the same time into one folder per recording:
+;; Records the screen (with the microphone and the desktop audio as two audio
+;; tracks) and the webcam at the same time into one folder per recording:
 ;;   <recordings>/<yyyy-MM-ddTHH:mm>-<name>/screen.mkv   (via record-screen)
 ;;   <recordings>/<yyyy-MM-ddTHH:mm>-<name>/webcam.mkv   (via record-webcam)
 ;; Both carry the microphone, so the editor can align the two clips by

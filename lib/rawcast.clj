@@ -14,6 +14,19 @@
   `pactl list short sources`."
   (setting "RAWCAST_MIC" "alsa_input.usb-Shure_Inc_Shure_MV7-00.mono-fallback"))
 
+(def desktop-audio
+  "Second audio track of the screen recording, a gpu-screen-recorder audio
+  source: default_output (what the speakers play), app:chrome (one
+  application), app-inverse:slack (everything but one application) or
+  device:<name> from `gpu-screen-recorder --list-audio-devices`. Empty: no
+  second track."
+  (setting "RAWCAST_DESKTOP_AUDIO" "default_output"))
+
+(def desktop-gain
+  "Volume of the desktop audio in the composed video, as the ffmpeg volume
+  filter takes it: 0.5, -6dB, 1 for unchanged."
+  (setting "RAWCAST_DESKTOP_GAIN" "0.5"))
+
 (def camera
   (setting "RAWCAST_CAMERA" "/dev/video0"))
 
@@ -43,6 +56,10 @@
 (def ffmpeg
   "Needs the pulse input device and the camera encoder compiled in."
   (setting "RAWCAST_FFMPEG" "/usr/bin/ffmpeg"))
+
+(def ffprobe
+  "Used by compose to count the audio tracks of the screen recording."
+  (setting "RAWCAST_FFPROBE" "/usr/bin/ffprobe"))
 
 (def python
   "A python3 with numpy, used by compose to measure the lag between the two

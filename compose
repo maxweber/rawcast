@@ -4,12 +4,15 @@
 ;; corner, lips and voice in sync. Both files carry the microphone, so the
 ;; lag between them is measured by cross-correlating the two audio tracks
 ;; (lib/lag.py, python3 + numpy) and the webcam is shifted by it. The audio of
-;; the result is the screencast's track.
+;; the result is the screencast's microphone track plus its desktop audio
+;; track at RAWCAST_DESKTOP_GAIN, as one stereo track; a screencast with only
+;; the microphone keeps that track.
 ;;
 ;; Usage: compose <recording-folder> [output.mkv]
 ;;   default output: <recording-folder>/composite.mkv
 ;; Settings: RAWCAST_PIP_WIDTH (640), RAWCAST_PIP_MARGIN (32),
-;;   RAWCAST_PIP_CORNER (bottom-right), RAWCAST_CAMERA_ENCODER, RAWCAST_PYTHON.
+;;   RAWCAST_PIP_CORNER (bottom-right), RAWCAST_DESKTOP_GAIN (0.5),
+;;   RAWCAST_CAMERA_ENCODER, RAWCAST_PYTHON, RAWCAST_FFPROBE.
 
 (require '[babashka.classpath :as cp]
          '[babashka.fs :as fs])
@@ -60,10 +63,42 @@
                           {:known (keys corner-positions)})))
       (str/replace "M" rc/pip-margin)))
 
+(defn audio-track-count [file]
+  (->> (p/shell {:out :string} rc/ffprobe "-v" "error" "-select_streams" "a"
+                "-show_entries" "stream=index" "-of" "csv=p=0" file)
+       (:out)
+       (str/split-lines)
+       (remove str/blank?)
+       (count)))
+
+(defn video-filter
+  "The webcam scaled to the pip width in a corner of the screen."
+  []
+  (str "[1:v]scale=" rc/pip-width ":-2[cam];"
+       "[0:v][cam]overlay=" (overlay-position) ":eof_action=pass,format=yuv420p[v]"))
+
+(def stereo "aformat=sample_rates=48000:channel_layouts=stereo")
+
+(defn mix-filter
+  "The microphone (track 0) plus the desktop audio (track 1) at
+  RAWCAST_DESKTOP_GAIN as one stereo track, as long as the microphone track.
+  normalize=0 keeps the microphone at its level; amix would halve both."
+  []
+  (str "[0:a:0]" stereo "[mic];"
+       "[0:a:1]volume=" rc/desktop-gain "," stereo "[desk];"
+       "[mic][desk]amix=inputs=2:duration=first:normalize=0[a]"))
+
+(defn audio-args
+  "The mix of the two screencast tracks, or a copy of its only one."
+  [desktop?]
+  (if desktop?
+    ["-map" "[a]" "-c:a" "libopus" "-b:a" "128k"]
+    ["-map" "0:a:0" "-c:a" "copy"]))
+
 (defn command
   "Shifts the webcam by the lag: seeks into it when it started earlier, delays
   it when it started later."
-  [screen webcam lag output]
+  [screen webcam lag desktop? output]
   (concat
    [rc/ffmpeg "-hide_banner" "-loglevel" "error" "-stats" "-y"
     "-i" screen]
@@ -71,12 +106,12 @@
      ["-itsoffset" (str (- lag))]
      ["-ss" (str lag)])
    ["-i" webcam
-    "-filter_complex" (str "[1:v]scale=" rc/pip-width ":-2[cam];"
-                           "[0:v][cam]overlay=" (overlay-position)
-                           ":eof_action=pass,format=yuv420p[v]")
-    "-map" "[v]" "-map" "0:a:0"]
+    "-filter_complex" (str/join ";" (cond-> [(video-filter)]
+                                      desktop? (conj (mix-filter))))
+    "-map" "[v]"]
+   (audio-args desktop?)
    (rc/encoder)
-   ["-c:a" "copy" output]))
+   [output]))
 
 (let [[dir output] *command-line-args*
       screen (str dir "/screen.mkv")
@@ -86,10 +121,14 @@
     (binding [*out* *err*]
       (println "compose: usage: compose <folder with screen.mkv and webcam.mkv> [output.mkv]"))
     (System/exit 1))
-  (let [{:keys [lag ratio]} (lag screen webcam)]
+  (let [{:keys [lag ratio]} (lag screen webcam)
+        desktop? (< 1 (audio-track-count screen))]
     (println (format "Webcam started %.3f s %s the screen (confidence %.1f)"
                      (abs lag) (if (neg? lag) "after" "before") ratio))
     (when (< ratio 1.5)
       (println "Low confidence: little shared sound in the two tracks, check the sync."))
-    (apply p/shell (command screen webcam lag output))
+    (println (if desktop?
+               (str "Mixing the desktop audio at volume " rc/desktop-gain)
+               "No desktop audio track, keeping the microphone track"))
+    (apply p/shell (command screen webcam lag desktop? output))
     (println "Saved" output)))

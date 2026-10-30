@@ -1,7 +1,9 @@
 #!/usr/bin/env bb
 
-;; Records the screen (full resolution) into an mkv with the microphone as the
-;; audio track. The screen is captured through the xdg-desktop-portal by
+;; Records the screen (full resolution) into an mkv with two audio tracks: the
+;; microphone and the desktop audio (RAWCAST_DESKTOP_AUDIO, what the speakers
+;; play). Two tracks instead of one mix, so that the edit can balance or mute
+;; them. The screen is captured through the xdg-desktop-portal by
 ;; gpu-screen-recorder (Flatpak com.dec05eba.gpu_screen_recorder). The first
 ;; run shows the desktop's screen picker: choose the screen, the choice is
 ;; stored and restored on every later run. Refuses to start without the
@@ -20,16 +22,25 @@
          '[clojure.string :as str]
          '[rawcast :as rc])
 
+(defn audio-tracks
+  "One -a per track: the microphone first (compose aligns the webcam by it),
+  the desktop audio second. A | inside one -a would mix the sources instead."
+  []
+  (concat ["-a" (str "device:" rc/mic)]
+          (when-not (str/blank? rc/desktop-audio)
+            ["-a" rc/desktop-audio])))
+
 (defn command
   "setsid puts the recorder into its own session: a Ctrl-C in the terminal
   must not reach it, stop! sends the one signal it gets."
   [output]
-  ["setsid" "flatpak" "run" "--command=gpu-screen-recorder" "com.dec05eba.gpu_screen_recorder"
-   "-w" "portal" "-restore-portal-session" "yes"
-   "-f" rc/screen-fps "-fm" "cfr" "-cursor" "yes"
-   "-a" (str "device:" rc/mic)
-   "-k" "h264" "-q" "very_high" "-c" "mkv"
-   "-o" output])
+  (concat
+   ["setsid" "flatpak" "run" "--command=gpu-screen-recorder" "com.dec05eba.gpu_screen_recorder"
+    "-w" "portal" "-restore-portal-session" "yes"
+    "-f" rc/screen-fps "-fm" "cfr" "-cursor" "yes"]
+   (audio-tracks)
+   ["-k" "h264" "-q" "very_high" "-c" "mkv"
+    "-o" output]))
 
 (defn recorder-pids
   "Pids of the gpu-screen-recorder processes inside the Flatpak sandbox. A
