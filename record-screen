@@ -56,6 +56,12 @@
                           (str/ends-with? "gpu-screen-recorder"))
                       (catch Exception _ false))))))
 
+(def recorder
+  "Names for the messages of rc/watch! and rc/finish!."
+  {:script "record-screen"
+   :program "gpu-screen-recorder"
+   :source "screen"})
+
 (def stopping (atom false))
 
 (defn stop!
@@ -73,7 +79,9 @@
   (fs/create-dirs (fs/parent (fs/absolutize output)))
   (let [proc (apply p/process {:out :inherit :err :inherit :shutdown stop!}
                     (command output))]
+    (rc/watch! recorder proc stopping)
     (println "Recording screen ->" output "(Enter stops)")
     (read-line)
-    (stop! proc)
-    (println "Saved" output)))
+    (let [running? (p/alive? proc)
+          {:keys [exit]} (stop! proc)]
+      (rc/finish! recorder output running? exit))))

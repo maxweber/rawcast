@@ -28,7 +28,8 @@ Four babashka scripts:
 | `compose <folder> [out.mkv]` | screen with the webcam in a corner, in sync, as one mkv |
 
 Enter or Ctrl-C stops a recording. The files are finalized before the script
-exits.
+exits. A recorder that stops on its own is reported at once, see
+[When a recorder fails](#when-a-recorder-fails).
 
 ## Why
 
@@ -95,7 +96,7 @@ Environment variables, defaults in `lib/rawcast.clj`:
 | `RAWCAST_CAMERA` | `/dev/video0` | |
 | `RAWCAST_CAMERA_SIZE` | `1920x1080` | an MJPEG mode of the camera, see `ffmpeg -f v4l2 -list_formats all -i /dev/video0` |
 | `RAWCAST_CAMERA_FPS` | `30` | |
-| `RAWCAST_CAMERA_ENCODER` | `h264_nvenc` | or `libx264` |
+| `RAWCAST_CAMERA_ENCODER` | `h264_nvenc` | or `libx264`, the CPU fallback when CUDA fails |
 | `RAWCAST_FFMPEG` | `/usr/bin/ffmpeg` | |
 | `RAWCAST_FFPROBE` | `/usr/bin/ffprobe` | for `compose` |
 | `RAWCAST_SCREEN_FPS` | `60` | |
@@ -126,6 +127,26 @@ without a duration:
   signal, so both recorders run under `setsid` in their own session, and the
   scripts send exactly one SIGINT, whether stopped by Enter, Ctrl-C or a
   SIGTERM from the parent.
+
+## When a recorder fails
+
+If ffmpeg or gpu-screen-recorder exits while the script still waits for
+Enter, the script says so on stderr right away, so you learn it during the
+recording and not after it:
+
+```
+record-webcam: ffmpeg stopped (exit 171), the webcam is NOT being recorded
+record-webcam: if the error above is about h264_nvenc or CUDA, record with RAWCAST_CAMERA_ENCODER=libx264
+```
+
+At the stop such a script prints no `Saved` and exits with 1. The same
+happens when the file is missing or empty. `record` then prints
+`record-webcam exited with 1`. The recorder's exit code alone cannot tell,
+because ffmpeg exits with 255 after the SIGINT that stops it.
+
+`h264_nvenc` fails whenever CUDA does, for example after an NVIDIA driver
+update until the next reboot (`nvidia-smi` says "Driver/library version
+mismatch"). Record with `RAWCAST_CAMERA_ENCODER=libx264` until then.
 
 ## Compose
 

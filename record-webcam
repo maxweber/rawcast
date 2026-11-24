@@ -33,6 +33,18 @@
     "-c:a" "flac"
     output]))
 
+(def recorder
+  "Names for the messages of rc/watch! and rc/finish!. h264_nvenc fails at
+  startup whenever CUDA does, for example after a driver update until the
+  next reboot (nvidia-smi: Driver/library version mismatch); libx264 needs no
+  GPU."
+  {:script "record-webcam"
+   :program "ffmpeg"
+   :source "webcam"
+   :hint (when (= "h264_nvenc" rc/camera-encoder)
+           (str "if the error above is about h264_nvenc or CUDA, record with"
+                " RAWCAST_CAMERA_ENCODER=libx264"))})
+
 (def stopping (atom false))
 
 (defn stop!
@@ -48,7 +60,9 @@
   (fs/create-dirs (fs/parent (fs/absolutize output)))
   (let [proc (apply p/process {:out :inherit :err :inherit :shutdown stop!}
                     (command output))]
+    (rc/watch! recorder proc stopping)
     (println "Recording webcam ->" output "(Enter stops)")
     (read-line)
-    (stop! proc)
-    (println "Saved" output)))
+    (let [running? (p/alive? proc)
+          {:keys [exit]} (stop! proc)]
+      (rc/finish! recorder output running? exit))))
