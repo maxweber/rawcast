@@ -109,3 +109,41 @@
   fails inside a shutdown hook."
   [pid]
   @(p/process ["kill" "-INT" (str pid)]))
+
+(defn watch!
+  "Prints an alarm to stderr the moment the recorder exits on its own, that
+  is while `stopping` is still false. A recorder that fails at startup (a
+  broken camera encoder) or dies midway leaves the script waiting for Enter;
+  the user must learn it during the recording, not after it. The map names
+  the script, the recorder program, what it records and an optional hint."
+  [{:keys [script program source hint]} proc stopping]
+  (future
+    (let [{:keys [exit]} @proc]
+      (when-not @stopping
+        (binding [*out* *err*]
+          (println (str script ": " program " stopped (exit " exit "), the "
+                        source " is NOT being recorded"))
+          (when hint
+            (println (str script ": " hint))))))))
+
+(defn non-empty? [file]
+  (and (fs/regular-file? file) (pos? (fs/size file))))
+
+(defn finish!
+  "After the stop: Saved when the recorder was still running at the Enter key
+  and left a non-empty file. Otherwise the reason on stderr and exit 1, so
+  that `record` reports it. The exit code alone cannot tell: ffmpeg exits
+  with 255 after the SIGINT that stops it."
+  [{:keys [script program]} output running? exit]
+  (let [problem (cond
+                  (not (non-empty? output))
+                  (str "NOT saved, " output " is missing or empty")
+                  (not running?)
+                  (str "NOT saved completely, " program " had stopped before"
+                       " the Enter key (exit " exit "), " output
+                       " holds only the part before"))]
+    (when problem
+      (binding [*out* *err*]
+        (println (str script ": " problem)))
+      (System/exit 1))
+    (println "Saved" output)))
